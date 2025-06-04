@@ -1,0 +1,133 @@
+{
+  "meta": {
+    "generatedAt": "2025-06-02T06:42:43.049Z",
+    "tasksAnalyzed": 15,
+    "totalTasks": 15,
+    "analysisCount": 15,
+    "thresholdScore": 5,
+    "projectName": "Taskmaster",
+    "usedResearch": true
+  },
+  "complexityAnalysis": [
+    {
+      "taskId": 1,
+      "taskTitle": "Setup Next.js 14 Project with Tech Stack",
+      "complexityScore": 7,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Break down the setup into subtasks: Next.js 14 project initialization, Node.js version configuration, dependency installation (spotify-web-api-node, Prisma), ESLint/Prettier setup, Vercel deployment configuration, environment variables structure, GitHub repository and Actions workflow setup.",
+      "reasoning": "This task involves multiple setup steps across project initialization, dependency management, code quality tooling, deployment, and CI/CD. Each step is distinct and requires careful configuration to ensure a robust foundation for the project[1][2][4]."
+    },
+    {
+      "taskId": 2,
+      "taskTitle": "Configure SQLite Database with Prisma Schema",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Expand into subtasks: Define Prisma schema, configure SQLite provider, generate Prisma client, implement database initialization, test migrations and CRUD operations.",
+      "reasoning": "While setting up a database with Prisma is straightforward, defining a multi-table schema, configuring the provider, and ensuring migrations and CRUD operations work correctly adds moderate complexity."
+    },
+    {
+      "taskId": 3,
+      "taskTitle": "Implement Spotify OAuth 2.0 PKCE Authentication",
+      "complexityScore": 8,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Expand into subtasks: Implement PKCE flow, request required scopes, create login endpoint, create callback endpoint, implement token refresh endpoint, integrate AES-256 encryption for tokens, handle token expiration and errors.",
+      "reasoning": "OAuth 2.0 PKCE with secure token handling and multiple endpoints is complex, requiring careful security considerations, integration with third-party APIs, and robust error handling."
+    },
+    {
+      "taskId": 4,
+      "taskTitle": "Create Encrypted Token Storage System",
+      "complexityScore": 7,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Break down into: AES-256 encryption utility, decryption utility, IndexedDB wrapper, token expiration tracking, automatic cleanup, token validation and refresh logic.",
+      "reasoning": "Implementing secure client-side storage with encryption, expiration, and refresh logic is non-trivial and must be robust to ensure security and reliability[5]."
+    },
+    {
+      "taskId": 5,
+      "taskTitle": "Implement Liked Songs Data Ingest System",
+      "complexityScore": 8,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Expand into: Paginated fetching logic, metadata caching, rate limiting, retry logic with exponential backoff, ingest timestamp storage, incremental update logic, error handling.",
+      "reasoning": "Fetching and caching large datasets with rate limiting, retries, and incremental updates involves complex control flow and robust error handling."
+    },
+    {
+      "taskId": 6,
+      "taskTitle": "Implement Artist Genres Batch Fetching",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Expand into: Extract unique artist IDs, batch API call logic, genre data caching, rate limiting and retry logic, associate genres with tracks.",
+      "reasoning": "Batch API calls and data association are moderately complex, especially with rate limiting and error handling."
+    },
+    {
+      "taskId": 7,
+      "taskTitle": "Implement Audio Features Fetching (Extended Mode)",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Expand into: Batch fetching logic, permission handling and fallback, audio feature extraction, caching in database, error handling for denied access.",
+      "reasoning": "Similar to genre fetching, but with additional complexity for permission handling and fallback logic."
+    },
+    {
+      "taskId": 8,
+      "taskTitle": "Create Label Discovery Algorithm",
+      "complexityScore": 7,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Expand into: Histogram generation for each dimension, grouping algorithm, candidate label generation, minimum track threshold logic, sample track selection, deterministic playlist key generation.",
+      "reasoning": "Algorithmic work for grouping and label generation, with deterministic key creation, requires careful design and testing."
+    },
+    {
+      "taskId": 9,
+      "taskTitle": "Build Explore Panel React Component",
+      "complexityScore": 6,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Expand into: UI for displaying dimensions and counts, toggle switches, minimum-track sliders, real-time preview logic, accessibility compliance, persistence of user choices.",
+      "reasoning": "Building an interactive, accessible UI with real-time updates and persistence involves both frontend logic and accessibility considerations."
+    },
+    {
+      "taskId": 10,
+      "taskTitle": "Implement Playlist Name Generation System",
+      "complexityScore": 5,
+      "recommendedSubtasks": 4,
+      "expansionPrompt": "Expand into: Name template logic, emoji mapping per dimension, collision handling, Spotify compliance checks.",
+      "reasoning": "Deterministic name and emoji assignment with collision handling is a focused logic task, less complex than data ingest or authentication."
+    },
+    {
+      "taskId": 11,
+      "taskTitle": "Build Preview and Confirmation Interface",
+      "complexityScore": 5,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Expand into: Preview table UI, Generate/Cancel button logic, state management, loading/progress indicators, responsive and accessible design.",
+      "reasoning": "UI work with state management and accessibility, but less complex than backend or algorithmic tasks."
+    },
+    {
+      "taskId": 12,
+      "taskTitle": "Implement Spotify Playlist Creation System",
+      "complexityScore": 8,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Expand into: Playlist creation API integration, batch track addition logic, rate limiting, mapping storage, error handling, partial failure recovery, job resumption logic.",
+      "reasoning": "Integrating with external APIs, handling batching, rate limiting, error recovery, and resumability is complex and critical for reliability."
+    },
+    {
+      "taskId": 13,
+      "taskTitle": "Create Rollback/Undo Functionality",
+      "complexityScore": 6,
+      "recommendedSubtasks": 5,
+      "expansionPrompt": "Expand into: Rollback button UI, playlist deletion logic, partial failure handling, confirmation dialog, database cleanup.",
+      "reasoning": "Undo logic with time window, error handling, and UI/DB cleanup is moderately complex."
+    },
+    {
+      "taskId": 14,
+      "taskTitle": "Implement Performance Optimization and Monitoring",
+      "complexityScore": 7,
+      "recommendedSubtasks": 6,
+      "expansionPrompt": "Expand into: Streaming data processing, memory optimization, performance monitoring, batch/API optimization, progress tracking, telemetry integration.",
+      "reasoning": "Performance tuning and monitoring for large datasets, with memory and timing constraints, requires advanced optimization and instrumentation."
+    },
+    {
+      "taskId": 15,
+      "taskTitle": "Setup CI/CD Pipeline and Production Deployment",
+      "complexityScore": 7,
+      "recommendedSubtasks": 7,
+      "expansionPrompt": "Expand into: GitHub Actions workflow setup, linting configuration, unit test integration, build verification, automated Vercel deployment, environment variable management, monitoring/error tracking integration.",
+      "reasoning": "CI/CD setup with automated testing, deployment, environment management, and monitoring is multi-faceted and critical for production readiness."
+    }
+  ]
+}
