@@ -643,6 +643,149 @@ class DatabaseService {
       return false;
     }
   }
+
+  // =====================================
+  // Playlist Management Operations
+  // =====================================
+
+  /**
+   * Store generated playlist mapping
+   */
+  async storeGeneratedPlaylist(playlistData) {
+    try {
+      const playlist = await this.prisma.generatedPlaylist.create({
+        data: {
+          key: playlistData.key,
+          spotifyId: playlistData.spotifyId,
+          name: playlistData.name,
+          category: playlistData.category,
+          trackCount: playlistData.trackCount,
+          groupData: playlistData.groupData,
+          createdAt: new Date(),
+        },
+      });
+
+      console.log(
+        chalk.green(`✅ Stored playlist mapping: ${playlistData.name}`)
+      );
+      return playlist;
+    } catch (error) {
+      ErrorHandler.handleStorageError(error, "Generated Playlist Storage");
+      throw error;
+    }
+  }
+
+  /**
+   * Find existing playlist by key
+   */
+  async findPlaylistByKey(key) {
+    try {
+      const playlist = await this.prisma.generatedPlaylist.findUnique({
+        where: { key },
+      });
+
+      return playlist;
+    } catch (error) {
+      ErrorHandler.handleStorageError(error, "Playlist Key Lookup");
+      return null;
+    }
+  }
+
+  /**
+   * Get all generated playlists
+   */
+  async getAllGeneratedPlaylists() {
+    try {
+      const playlists = await this.prisma.generatedPlaylist.findMany({
+        orderBy: { createdAt: "desc" },
+      });
+
+      return playlists;
+    } catch (error) {
+      ErrorHandler.handleStorageError(error, "Generated Playlists Query");
+      return [];
+    }
+  }
+
+  /**
+   * Delete generated playlist
+   */
+  async deleteGeneratedPlaylist(key) {
+    try {
+      const deleted = await this.prisma.generatedPlaylist.delete({
+        where: { key },
+      });
+
+      console.log(chalk.green(`✅ Deleted playlist mapping: ${deleted.name}`));
+      return deleted;
+    } catch (error) {
+      ErrorHandler.handleStorageError(error, "Generated Playlist Deletion");
+      throw error;
+    }
+  }
+
+  /**
+   * Store playlist tracks relationship
+   */
+  async storePlaylistTracks(playlistKey, trackIds) {
+    try {
+      // First, remove existing tracks for this playlist
+      await this.prisma.playlistTrack.deleteMany({
+        where: { playlistKey },
+      });
+
+      // Then add new tracks
+      const playlistTracks = trackIds.map((trackId, index) => ({
+        playlistKey,
+        trackId,
+        position: index,
+        addedAt: new Date(),
+      }));
+
+      await this.prisma.playlistTrack.createMany({
+        data: playlistTracks,
+      });
+
+      console.log(
+        chalk.green(
+          `✅ Stored ${trackIds.length} tracks for playlist ${playlistKey}`
+        )
+      );
+    } catch (error) {
+      ErrorHandler.handleStorageError(error, "Playlist Tracks Storage");
+      throw error;
+    }
+  }
+
+  /**
+   * Get tracks for a playlist
+   */
+  async getPlaylistTracks(playlistKey) {
+    try {
+      const playlistTracks = await this.prisma.playlistTrack.findMany({
+        where: { playlistKey },
+        include: {
+          track: {
+            include: {
+              album: true,
+              trackArtists: {
+                include: {
+                  artist: true,
+                },
+                orderBy: { position: "asc" },
+              },
+            },
+          },
+        },
+        orderBy: { position: "asc" },
+      });
+
+      return playlistTracks.map((pt) => pt.track);
+    } catch (error) {
+      ErrorHandler.handleStorageError(error, "Playlist Tracks Query");
+      return [];
+    }
+  }
 }
 
 module.exports = DatabaseService;

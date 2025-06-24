@@ -41,6 +41,7 @@
     "d3-array": "^3.2.4",
     "dotenv": "^16.4.7",
     "keytar": "^7.9.0",
+    "node-emoji": "^1.11.0",
     "spotify-web-api-node": "^5.0.2"
   },
   "devDependencies": {

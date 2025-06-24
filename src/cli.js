@@ -11,6 +11,7 @@ const authCommand = require("./commands/auth");
 const { scanCommand, statusCommand } = require("./commands/scan");
 const benchmarkCommand = require("./commands/benchmark");
 const analyzeCommand = require("./commands/analyze");
+const generateCommand = require("./commands/generate");
 
 const program = new Command();
 
@@ -145,11 +146,22 @@ program
     "--dry-run",
     "Show what would be created without making actual changes"
   )
-  .action(() => {
-    console.log(chalk.yellow("🎵 Generate command coming soon..."));
-    console.log(
-      chalk.gray("This will create playlists based on discovered categories")
-    );
+  .option(
+    "--max-playlists <number>",
+    "Maximum number of playlists to create",
+    "25"
+  )
+  .action(async (options) => {
+    try {
+      await generateCommand({
+        confirm: options.confirm,
+        dryRun: options.dryRun,
+        maxPlaylists: parseInt(options.maxPlaylists),
+      });
+    } catch (error) {
+      console.error(chalk.red(`❌ Generate failed: ${error.message}`));
+      process.exit(1);
+    }
   });
 
 program
