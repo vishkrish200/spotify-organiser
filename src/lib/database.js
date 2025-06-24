@@ -462,6 +462,82 @@ class DatabaseService {
   }
 
   /**
+   * Get all tracks with metadata for analysis (formatted for MusicAnalysis module)
+   */
+  async getAllTracksWithMetadata() {
+    try {
+      const tracks = await this.prisma.track.findMany({
+        include: {
+          album: true,
+          trackArtists: {
+            include: {
+              artist: {
+                include: {
+                  artistGenres: {
+                    include: {
+                      genre: true,
+                    },
+                  },
+                },
+              },
+            },
+            orderBy: { position: "asc" },
+          },
+          audioFeatures: true,
+        },
+        orderBy: { addedAt: "desc" },
+      });
+
+      // Transform the data into a format suitable for analysis
+      return tracks.map((track) => ({
+        id: track.id,
+        name: track.name,
+        duration: track.durationMs,
+        popularity: track.popularity,
+        explicit: track.explicit,
+        addedAt: track.addedAt,
+
+        album: {
+          id: track.album.id,
+          name: track.album.name,
+          releaseDate: track.album.releaseDate,
+          releaseYear: track.album.releaseYear,
+          albumType: track.album.albumType,
+          totalTracks: track.album.totalTracks,
+        },
+
+        artists: track.trackArtists.map((ta) => ({
+          id: ta.artist.id,
+          name: ta.artist.name,
+          popularity: ta.artist.popularity,
+          position: ta.position,
+          genres: ta.artist.artistGenres.map((ag) => ag.genre.name),
+        })),
+
+        audioFeatures: track.audioFeatures
+          ? {
+              danceability: track.audioFeatures.danceability,
+              energy: track.audioFeatures.energy,
+              key: track.audioFeatures.key,
+              loudness: track.audioFeatures.loudness,
+              mode: track.audioFeatures.mode,
+              speechiness: track.audioFeatures.speechiness,
+              acousticness: track.audioFeatures.acousticness,
+              instrumentalness: track.audioFeatures.instrumentalness,
+              liveness: track.audioFeatures.liveness,
+              valence: track.audioFeatures.valence,
+              tempo: track.audioFeatures.tempo,
+              timeSignature: track.audioFeatures.timeSignature,
+            }
+          : null,
+      }));
+    } catch (error) {
+      ErrorHandler.handleStorageError(error, "Track Analysis Query");
+      return [];
+    }
+  }
+
+  /**
    * Get scan history
    */
   async getScanHistory(limit = 10) {

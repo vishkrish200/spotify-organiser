@@ -38,6 +38,7 @@
     "chalk": "^4.1.2",
     "cli-progress": "^3.12.0",
     "commander": "^12.1.0",
+    "d3-array": "^3.2.4",
     "dotenv": "^16.4.7",
     "keytar": "^7.9.0",
     "spotify-web-api-node": "^5.0.2"

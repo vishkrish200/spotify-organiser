@@ -10,6 +10,7 @@ const chalk = require("chalk");
 const authCommand = require("./commands/auth");
 const { scanCommand, statusCommand } = require("./commands/scan");
 const benchmarkCommand = require("./commands/benchmark");
+const analyzeCommand = require("./commands/analyze");
 
 const program = new Command();
 
@@ -102,13 +103,19 @@ program
     "Analyze cached tracks to discover grouping patterns and categories"
   )
   .option("--min-tracks <number>", "Minimum tracks required per playlist", "15")
-  .action(() => {
-    console.log(chalk.yellow("📋 Analysis command coming soon..."));
-    console.log(
-      chalk.gray(
-        "This will discover genres, decades, and other categorization patterns"
-      )
-    );
+  .option("--details", "Show detailed breakdown of each category")
+  .option("--export", "Export analysis results to JSON file")
+  .action(async (options) => {
+    try {
+      await analyzeCommand({
+        minTracks: parseInt(options.minTracks),
+        showDetails: options.details,
+        exportResults: options.export,
+      });
+    } catch (error) {
+      console.error(chalk.red(`❌ Analysis failed: ${error.message}`));
+      process.exit(1);
+    }
   });
 
 program
