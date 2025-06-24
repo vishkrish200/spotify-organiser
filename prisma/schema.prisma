@@ -1,0 +1,259 @@
+// Prisma Schema for Spotify Organizer
+// SQLite database for caching track data, genres, and audio features
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./spotify_organizer.db"
+}
+
+// =====================================
+// Core Track Data
+// =====================================
+
+model Track {
+  id            String   @id // Spotify track ID
+  name          String
+  durationMs    Int      @map("duration_ms")
+  popularity    Int
+  previewUrl    String?  @map("preview_url")
+  explicit      Boolean  @default(false)
+  isLocal       Boolean  @default(false) @map("is_local")
+  
+  // Timestamps
+  addedAt       DateTime @map("added_at") // When user liked the track
+  fetchedAt     DateTime @default(now()) @map("fetched_at") // When we cached it
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  // Album information
+  album         Album    @relation(fields: [albumId], references: [id])
+  albumId       String   @map("album_id")
+  
+  // Audio features (Extended Mode)
+  audioFeatures AudioFeatures?
+  
+  // Track-Artist many-to-many relationship
+  trackArtists  TrackArtist[]
+  
+  // Playlist assignments
+  playlistTracks PlaylistTrack[]
+
+  @@map("tracks")
+}
+
+model Album {
+  id           String   @id // Spotify album ID
+  name         String
+  releaseDate  String   @map("release_date") // YYYY-MM-DD format
+  releaseYear  Int      @map("release_year")
+  totalTracks  Int      @map("total_tracks")
+  albumType    String   @map("album_type") // album, single, compilation
+  imageUrl     String?  @map("image_url")
+  
+  // Timestamps
+  fetchedAt    DateTime @default(now()) @map("fetched_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  
+  // Relationships
+  tracks       Track[]
+
+  @@map("albums")
+}
+
+model Artist {
+  id           String   @id // Spotify artist ID
+  name         String
+  popularity   Int      @default(0)
+  imageUrl     String?  @map("image_url")
+  
+  // Timestamps
+  fetchedAt    DateTime @default(now()) @map("fetched_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  
+  // Relationships
+  trackArtists TrackArtist[]
+  artistGenres ArtistGenre[]
+
+  @@map("artists")
+}
+
+// Junction table for Track-Artist many-to-many
+model TrackArtist {
+  track     Track   @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId   String  @map("track_id")
+  artist    Artist  @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  artistId  String  @map("artist_id")
+  
+  // Position/order of artist in track credits
+  position  Int     @default(0)
+  
+  @@id([trackId, artistId])
+  @@map("track_artists")
+}
+
+// =====================================
+// Extended Mode Data
+// =====================================
+
+model AudioFeatures {
+  trackId         String  @id @map("track_id") // One-to-one with Track
+  
+  // Audio analysis features
+  danceability    Float
+  energy          Float
+  key             Int
+  loudness        Float
+  mode            Int
+  speechiness     Float
+  acousticness    Float
+  instrumentalness Float
+  liveness        Float
+  valence         Float
+  tempo           Float
+  
+  // Timing
+  timeSignature   Int     @map("time_signature")
+  
+  // Timestamps
+  fetchedAt       DateTime @default(now()) @map("fetched_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  // Relationship
+  track           Track   @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@map("audio_features")
+}
+
+model Genre {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique
+  
+  // Metadata
+  trackCount    Int      @default(0) @map("track_count") // Denormalized for performance
+  
+  // Timestamps
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  // Relationships
+  artistGenres  ArtistGenre[]
+
+  @@map("genres")
+}
+
+// Junction table for Artist-Genre many-to-many
+model ArtistGenre {
+  artist    Artist  @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  artistId  String  @map("artist_id")
+  genre     Genre   @relation(fields: [genreId], references: [id], onDelete: Cascade)
+  genreId   Int     @map("genre_id")
+  
+  @@id([artistId, genreId])
+  @@map("artist_genres")
+}
+
+// =====================================
+// Scan & Operation History
+// =====================================
+
+model ScanHistory {
+  id              Int      @id @default(autoincrement())
+  
+  // Scan metadata
+  scanType        String   @map("scan_type") // "full", "incremental", "extended"
+  status          String   // "in_progress", "completed", "failed", "cancelled"
+  
+  // Statistics
+  totalTracks     Int      @map("total_tracks")
+  tracksProcessed Int      @map("tracks_processed")
+  tracksAdded     Int      @map("tracks_added")
+  tracksUpdated   Int      @map("tracks_updated")
+  
+  // Extended mode stats
+  genresFetched   Int      @default(0) @map("genres_fetched")
+  audioFeaturesFetched Int @default(0) @map("audio_features_fetched")
+  
+  // Timing
+  startTime       DateTime @map("start_time")
+  endTime         DateTime? @map("end_time")
+  duration        Int?     // Duration in seconds
+  
+  // Error handling
+  errorMessage    String?  @map("error_message")
+  errorCount      Int      @default(0) @map("error_count")
+  
+  // Metadata
+  spotifyUserId   String   @map("spotify_user_id")
+  
+  @@map("scan_history")
+}
+
+// =====================================
+// Generated Playlists (Future)
+// =====================================
+
+model GeneratedPlaylist {
+  id              Int      @id @default(autoincrement())
+  spotifyId       String?  @unique @map("spotify_id") // Spotify playlist ID when created
+  
+  // Playlist metadata
+  name            String
+  description     String?
+  isPublic        Boolean  @default(false) @map("is_public")
+  
+  // Categorization rules
+  categoryType    String   @map("category_type") // "genre", "decade", "bpm", "energy"
+  categoryValue   String   @map("category_value") // "rock", "2010s", "120-140", "high"
+  
+  // Statistics
+  trackCount      Int      @map("track_count")
+  
+  // Timestamps
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  // Rollback support
+  canRollback     Boolean  @default(true) @map("can_rollback")
+  rollbackExpiry  DateTime? @map("rollback_expiry")
+  
+  // Relationships
+  playlistTracks  PlaylistTrack[]
+
+  @@map("generated_playlists")
+}
+
+// Junction table for Playlist-Track many-to-many
+model PlaylistTrack {
+  playlist    GeneratedPlaylist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  playlistId  Int               @map("playlist_id")
+  track       Track             @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId     String            @map("track_id")
+  
+  // Track position in playlist
+  position    Int
+  
+  // Timestamps
+  addedAt     DateTime          @default(now()) @map("added_at")
+  
+  @@id([playlistId, trackId])
+  @@map("playlist_tracks")
+}
+
+// =====================================
+// Configuration & Settings
+// =====================================
+
+model AppConfig {
+  key         String   @id
+  value       String
+  description String?
+  
+  // Timestamps
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("app_config")
+} 
