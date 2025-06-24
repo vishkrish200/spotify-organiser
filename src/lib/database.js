@@ -7,6 +7,8 @@
 
 const { PrismaClient } = require("@prisma/client");
 const chalk = require("chalk");
+const DatabaseOptimizer = require("./dbOptimizer");
+const MemoryOptimizer = require("./memoryOptimizer");
 const ErrorHandler = require("../utils/errorHandler");
 
 class DatabaseService {
@@ -16,11 +18,24 @@ class DatabaseService {
         process.env.NODE_ENV === "development" ? ["query", "error"] : ["error"],
     });
 
+    this.optimizer = new DatabaseOptimizer(this.prisma);
+    this.memoryOptimizer = new MemoryOptimizer({
+      monitoringInterval: 60000, // 1 minute for database operations
+      memoryWarningThreshold: 300 * 1024 * 1024, // 300MB warning for DB operations
+      enableObjectPooling: true,
+    });
+
     this.isConnected = false;
+    this.isOptimized = false;
+
+    // Register database-specific cleanup handlers
+    this.memoryOptimizer.registerCleanupHandler(() => {
+      this.performDatabaseCleanup();
+    });
   }
 
   /**
-   * Initialize database connection and run migrations
+   * Initialize database connection and run optimizations
    */
   async initialize() {
     try {
@@ -33,6 +48,19 @@ class DatabaseService {
       this.isConnected = true;
       console.log(chalk.green("✅ Database connected successfully"));
 
+      // Apply database optimizations for better performance
+      if (!this.isOptimized) {
+        const optimizationResult = await this.optimizer.optimize();
+        if (optimizationResult.success) {
+          this.isOptimized = true;
+          console.log(
+            chalk.green(
+              `✅ Database optimized (${optimizationResult.optimizationsApplied} applied)`
+            )
+          );
+        }
+      }
+
       return true;
     } catch (error) {
       console.log(chalk.red("❌ Database connection failed"));
@@ -42,10 +70,26 @@ class DatabaseService {
   }
 
   /**
+   * Database-specific cleanup for memory optimization
+   */
+  performDatabaseCleanup() {
+    // This method is called by MemoryOptimizer during cleanup
+    console.log(chalk.blue("🧹 Performing database memory cleanup..."));
+
+    // Clear any cached data structures if they exist
+    // This is a placeholder for future database-specific cleanup
+  }
+
+  /**
    * Disconnect from database
    */
   async disconnect() {
     try {
+      // Shutdown memory optimizer first
+      if (this.memoryOptimizer) {
+        await this.memoryOptimizer.shutdown();
+      }
+
       await this.prisma.$disconnect();
       this.isConnected = false;
       console.log(chalk.gray("📤 Database disconnected"));
@@ -59,9 +103,14 @@ class DatabaseService {
   // =====================================
 
   /**
-   * Store a batch of tracks from Spotify API response
+   * Store a batch of tracks from Spotify API response (optimized)
    */
   async storeTracks(spotifyTracks, scanId = null) {
+    // Use optimized batch processing for large datasets
+    if (spotifyTracks.length > 100) {
+      return this.storeTracksOptimized(spotifyTracks, scanId);
+    }
+
     const transaction = await this.prisma.$transaction(async (tx) => {
       const stats = {
         tracksAdded: 0,
@@ -135,6 +184,226 @@ class DatabaseService {
             chalk.yellow(
               `⚠️  Error storing track ${track.id}: ${error.message}`
             )
+          );
+        }
+      }
+
+      return stats;
+    });
+
+    return transaction;
+  }
+
+  /**
+   * Optimized batch storage for large track datasets
+   */
+  async storeTracksOptimized(spotifyTracks, scanId = null) {
+    console.log(
+      chalk.blue(
+        `📦 Using optimized batch storage for ${spotifyTracks.length} tracks`
+      )
+    );
+
+    const batchOperation = async (tx, batch) => {
+      const stats = {
+        tracksAdded: 0,
+        tracksUpdated: 0,
+        albumsAdded: 0,
+        artistsAdded: 0,
+      };
+
+      // Pre-process albums and artists to avoid repeated lookups
+      const albumMap = new Map();
+      const artistMap = new Map();
+
+      // Collect unique albums and artists
+      for (const item of batch) {
+        const { track } = item;
+        if (!track || !track.id) continue;
+
+        // Collect albums
+        if (track.album && !albumMap.has(track.album.id)) {
+          albumMap.set(track.album.id, track.album);
+        }
+
+        // Collect artists
+        if (track.artists) {
+          for (const artist of track.artists) {
+            if (!artistMap.has(artist.id)) {
+              artistMap.set(artist.id, artist);
+            }
+          }
+        }
+      }
+
+      // Batch process albums
+      for (const [albumId, albumData] of albumMap) {
+        const result = await this.storeAlbum(tx, albumData);
+        if (result.isNew) stats.albumsAdded++;
+      }
+
+      // Batch process artists
+      for (const [artistId, artistData] of artistMap) {
+        const result = await this.storeArtist(tx, artistData);
+        if (result.isNew) stats.artistsAdded++;
+      }
+
+      // Batch process tracks with optimized approach
+      for (const item of batch) {
+        const { track, added_at } = item;
+        if (!track || !track.id) continue;
+
+        try {
+          const existingTrack = await tx.track.findUnique({
+            where: { id: track.id },
+          });
+
+          if (existingTrack) {
+            await tx.track.update({
+              where: { id: track.id },
+              data: {
+                name: track.name,
+                durationMs: track.duration_ms,
+                popularity: track.popularity,
+                previewUrl: track.preview_url,
+                explicit: track.explicit,
+                updatedAt: new Date(),
+              },
+            });
+            stats.tracksUpdated++;
+          } else {
+            await tx.track.create({
+              data: {
+                id: track.id,
+                name: track.name,
+                durationMs: track.duration_ms,
+                popularity: track.popularity,
+                previewUrl: track.preview_url,
+                explicit: track.explicit,
+                isLocal: track.is_local || false,
+                addedAt: new Date(added_at),
+                albumId: track.album.id,
+              },
+            });
+            stats.tracksAdded++;
+          }
+
+          // Handle track-artist relationships efficiently
+          const artistIds = track.artists.map((artist, index) => ({
+            id: artist.id,
+            position: index,
+          }));
+          await this.updateTrackArtists(tx, track.id, artistIds);
+        } catch (error) {
+          console.log(
+            chalk.yellow(`⚠️ Error storing track ${track.id}: ${error.message}`)
+          );
+        }
+      }
+
+      return stats;
+    };
+
+    // Use the optimizer's batch operation method
+    try {
+      const results = await this.optimizer.batchOperation(
+        batchOperation,
+        spotifyTracks,
+        50
+      );
+
+      // Aggregate results
+      const totalStats = results.reduce(
+        (acc, result) => ({
+          tracksAdded: acc.tracksAdded + result.tracksAdded,
+          tracksUpdated: acc.tracksUpdated + result.tracksUpdated,
+          albumsAdded: acc.albumsAdded + result.albumsAdded,
+          artistsAdded: acc.artistsAdded + result.artistsAdded,
+        }),
+        { tracksAdded: 0, tracksUpdated: 0, albumsAdded: 0, artistsAdded: 0 }
+      );
+
+      console.log(
+        chalk.green(
+          `✅ Optimized batch storage completed: ${totalStats.tracksAdded} added, ${totalStats.tracksUpdated} updated`
+        )
+      );
+
+      return totalStats;
+    } catch (error) {
+      console.log(
+        chalk.red(`❌ Optimized batch storage failed: ${error.message}`)
+      );
+      // Fallback to regular storage
+      return this.storeTracksRegular(spotifyTracks, scanId);
+    }
+  }
+
+  /**
+   * Regular batch storage (fallback method)
+   */
+  async storeTracksRegular(spotifyTracks, scanId = null) {
+    const transaction = await this.prisma.$transaction(async (tx) => {
+      const stats = {
+        tracksAdded: 0,
+        tracksUpdated: 0,
+        albumsAdded: 0,
+        artistsAdded: 0,
+      };
+
+      for (const item of spotifyTracks) {
+        const { track, added_at } = item;
+        if (!track || !track.id) continue;
+
+        try {
+          const album = await this.storeAlbum(tx, track.album);
+          if (album.isNew) stats.albumsAdded++;
+
+          const artistIds = [];
+          for (let i = 0; i < track.artists.length; i++) {
+            const artist = await this.storeArtist(tx, track.artists[i]);
+            if (artist.isNew) stats.artistsAdded++;
+            artistIds.push({ id: artist.id, position: i });
+          }
+
+          const existingTrack = await tx.track.findUnique({
+            where: { id: track.id },
+          });
+
+          if (existingTrack) {
+            await tx.track.update({
+              where: { id: track.id },
+              data: {
+                name: track.name,
+                durationMs: track.duration_ms,
+                popularity: track.popularity,
+                previewUrl: track.preview_url,
+                explicit: track.explicit,
+                updatedAt: new Date(),
+              },
+            });
+            stats.tracksUpdated++;
+          } else {
+            await tx.track.create({
+              data: {
+                id: track.id,
+                name: track.name,
+                durationMs: track.duration_ms,
+                popularity: track.popularity,
+                previewUrl: track.preview_url,
+                explicit: track.explicit,
+                isLocal: track.is_local || false,
+                addedAt: new Date(added_at),
+                albumId: track.album.id,
+              },
+            });
+            stats.tracksAdded++;
+          }
+
+          await this.updateTrackArtists(tx, track.id, artistIds);
+        } catch (error) {
+          console.log(
+            chalk.yellow(`⚠️ Error storing track ${track.id}: ${error.message}`)
           );
         }
       }
@@ -420,6 +689,43 @@ class DatabaseService {
       console.log(chalk.green(`✅ Scan ${scanId} marked as ${status}`));
     } catch (error) {
       console.log(chalk.yellow(`⚠️  Error completing scan: ${error.message}`));
+    }
+  }
+
+  // =====================================
+  // Preview System Support Methods
+  // =====================================
+
+  /**
+   * Get total count of cached tracks
+   */
+  async getTrackCount() {
+    try {
+      return await this.prisma.track.count();
+    } catch (error) {
+      console.log(
+        chalk.yellow(`⚠️  Error getting track count: ${error.message}`)
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * Check if analysis data exists
+   */
+  async hasAnalysisData() {
+    try {
+      // Check if any analysis data exists in the database
+      const genreCount = await this.prisma.genre.count();
+      const audioFeaturesCount = await this.prisma.audioFeatures.count();
+
+      // We need at least some genres or audio features to consider analysis data available
+      return genreCount > 0 || audioFeaturesCount > 0;
+    } catch (error) {
+      console.log(
+        chalk.yellow(`⚠️  Error checking analysis data: ${error.message}`)
+      );
+      return false;
     }
   }
 

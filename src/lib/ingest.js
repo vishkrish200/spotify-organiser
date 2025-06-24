@@ -9,6 +9,12 @@ const chalk = require("chalk");
 const cliProgress = require("cli-progress");
 const SpotifyAuth = require("./auth");
 const DatabaseService = require("./database");
+const CacheManager = require("./cache");
+const BatchManager = require("./batchManager");
+const ParallelProcessor = require("./parallelProcessor");
+const MemoryOptimizer = require("./memoryOptimizer");
+const SkipLogicManager = require("./skipLogicManager");
+const StreamProcessor = require("./streamProcessor");
 const ErrorHandler = require("../utils/errorHandler");
 const RetryHandler = require("../utils/retryHandler");
 
@@ -16,14 +22,57 @@ class SpotifyIngest {
   constructor() {
     this.auth = new SpotifyAuth();
     this.db = new DatabaseService();
-    this.spotifyApi = null;
 
-    // Pagination configuration
+    // Pagination configuration (API-specific limits) - Define early
     this.config = {
-      batchSize: 50, // Maximum allowed by Spotify API
+      batchSize: 50, // Spotify saved tracks API limit
+      genreBatchSize: 50, // Maximum allowed by Spotify API for artists
+      audioFeaturesBatchSize: 100, // Maximum allowed for audio features
       maxRetries: 3,
       retryDelay: 1000,
     };
+
+    this.cache = new CacheManager({
+      maxMemoryItems: 5000,
+      maxMemorySize: 25 * 1024 * 1024, // 25MB for ingest cache
+    });
+    this.batchManager = new BatchManager({
+      maxConcurrentBatches: 3,
+      batchFlushInterval: 50, // Faster flushing for real-time feeling
+      adaptiveSizingEnabled: true,
+    });
+    this.parallelProcessor = new ParallelProcessor({
+      maxWorkers: 2, // Conservative for API operations
+      maxConcurrentAsync: 8, // Higher concurrency for I/O operations
+      chunkSize: 100, // Optimize for API batch sizes
+    });
+    this.memoryOptimizer = new MemoryOptimizer({
+      monitoringInterval: 30000, // 30 seconds during ingest
+      memoryWarningThreshold: 400 * 1024 * 1024, // 400MB warning for ingest
+      memoryCriticalThreshold: 800 * 1024 * 1024, // 800MB critical for ingest
+      enableObjectPooling: true,
+    });
+    this.skipLogicManager = new SkipLogicManager({
+      defaultCacheTTL: 20 * 60 * 1000, // 20 minutes for ingest cache
+      metadataCacheTTL: 2 * 60 * 60 * 1000, // 2 hours for metadata
+      minBatchSize: 5, // Skip if batch is too small
+      incrementalThreshold: 0.05, // 5% change threshold for ingest
+      enableDetailedLogging: true,
+      enableSkipMetrics: true,
+    });
+    this.streamProcessor = new StreamProcessor({
+      batchSize: this.config.batchSize,
+      enableCaching: true,
+      enableSkipLogic: true,
+      enableParallel: true,
+      continueOnError: true,
+      cache: this.cache,
+      batchManager: this.batchManager,
+      parallelProcessor: this.parallelProcessor,
+      skipLogicManager: this.skipLogicManager,
+      memoryOptimizer: this.memoryOptimizer,
+    });
+    this.spotifyApi = null;
 
     // Progress tracking
     this.progressBar = null;
@@ -89,6 +138,24 @@ class SpotifyIngest {
    * Cleanup resources
    */
   async cleanup() {
+    if (this.streamProcessor) {
+      await this.streamProcessor.shutdown();
+    }
+    if (this.skipLogicManager) {
+      this.skipLogicManager.shutdown();
+    }
+    if (this.memoryOptimizer) {
+      await this.memoryOptimizer.shutdown();
+    }
+    if (this.parallelProcessor) {
+      await this.parallelProcessor.shutdown();
+    }
+    if (this.batchManager) {
+      await this.batchManager.shutdown();
+    }
+    if (this.cache) {
+      await this.cache.shutdown();
+    }
     if (this.db) {
       await this.db.disconnect();
     }
@@ -103,6 +170,34 @@ class SpotifyIngest {
     try {
       this.stats.startTime = Date.now();
       console.log(chalk.blue("🔍 Starting liked songs scan..."));
+
+      // Skip logic: Check if we should skip the entire scan operation
+      const scanSkipCheck = this.skipLogicManager.shouldSkipOperation(
+        "full_scan",
+        {
+          time: {
+            interval: 15 * 60 * 1000, // Skip if scanned within last 15 minutes
+            force: options.force || false,
+          },
+          cache: {
+            data: await this.getCachedScanData(),
+            ttl: 20 * 60 * 1000, // 20 minutes cache for full scans
+          },
+        }
+      );
+
+      if (scanSkipCheck.skip) {
+        console.log(chalk.yellow(`⏭️ Skipping scan: ${scanSkipCheck.reason}`));
+        const cachedData = await this.getCachedTracks(extendedMode);
+        return {
+          success: true,
+          tracks: cachedData.tracks || [],
+          extendedData: cachedData.extendedData || {},
+          stats: this.stats,
+          skipped: true,
+          skipReason: scanSkipCheck.reason,
+        };
+      }
 
       // Initialize pagination
       const paginationState = this.initializePagination();
@@ -221,6 +316,22 @@ class SpotifyIngest {
    */
   async cacheTracksBatch(trackItems) {
     try {
+      // Skip logic: Check if batch should be processed
+      const batchSkipCheck = this.skipLogicManager.shouldSkipBatchOperation(
+        "track_batch_cache",
+        trackItems,
+        {
+          cacheKey: `batch_${trackItems.length}_${Date.now()}`,
+        }
+      );
+
+      if (batchSkipCheck.skip) {
+        console.log(
+          chalk.gray(`⏭️ Skipping batch cache: ${batchSkipCheck.reason}`)
+        );
+        return { tracksAdded: 0, tracksUpdated: 0, skipped: true };
+      }
+
       const cacheStats = await this.db.storeTracks(
         trackItems,
         this.currentScanId
@@ -286,7 +397,7 @@ class SpotifyIngest {
   }
 
   /**
-   * Fetch extended data (genres and audio features)
+   * Fetch extended data (genres and audio features) with parallel processing
    */
   async fetchExtendedData(tracks) {
     console.log(
@@ -294,17 +405,52 @@ class SpotifyIngest {
     );
 
     try {
-      // Extract unique track and artist IDs
-      const trackIds = tracks.map((item) => item.track?.id).filter((id) => id);
+      // Extract unique track and artist IDs with parallel processing for large datasets
+      let trackIds, artistIds;
 
-      const artistIds = Array.from(
-        new Set(
-          tracks
-            .flatMap((item) => item.track?.artists || [])
-            .map((artist) => artist.id)
-            .filter((id) => id)
-        )
-      );
+      if (tracks.length > 1000) {
+        console.log(
+          chalk.blue("📦 Using parallel processing for ID extraction...")
+        );
+
+        // Process track extraction in parallel
+        const extractionResults = await this.parallelProcessor.processAsync(
+          tracks,
+          async (trackBatch) => {
+            const batchTrackIds = trackBatch.track?.id
+              ? [trackBatch.track.id]
+              : [];
+            const batchArtistIds = trackBatch.track?.artists
+              ? trackBatch.track.artists
+                  .map((artist) => artist.id)
+                  .filter((id) => id)
+              : [];
+
+            return {
+              trackIds: batchTrackIds,
+              artistIds: batchArtistIds,
+            };
+          },
+          { concurrency: 4 }
+        );
+
+        // Merge results
+        trackIds = extractionResults.flatMap((result) => result.trackIds);
+        artistIds = [
+          ...new Set(extractionResults.flatMap((result) => result.artistIds)),
+        ];
+      } else {
+        // Use sequential processing for smaller datasets
+        trackIds = tracks.map((item) => item.track?.id).filter((id) => id);
+        artistIds = Array.from(
+          new Set(
+            tracks
+              .flatMap((item) => item.track?.artists || [])
+              .map((artist) => artist.id)
+              .filter((id) => id)
+          )
+        );
+      }
 
       console.log(
         chalk.white(`🎤 Fetching genres for ${artistIds.length} artists...`)
@@ -315,28 +461,67 @@ class SpotifyIngest {
         )
       );
 
-      // Fetch in parallel for better performance
-      const [genres, audioFeatures] = await Promise.all([
-        this.fetchArtistGenres(artistIds),
-        this.fetchAudioFeatures(trackIds),
-      ]);
+      // Use mixed processing: parallel API fetching + parallel database operations
+      const mixedWorkload = {
+        ioTasks: {
+          items: [
+            { type: "genres", ids: artistIds },
+            { type: "audioFeatures", ids: trackIds },
+          ],
+          processor: async (task) => {
+            if (task.type === "genres") {
+              return {
+                type: "genres",
+                data: await this.fetchArtistGenres(task.ids),
+              };
+            } else {
+              return {
+                type: "audioFeatures",
+                data: await this.fetchAudioFeatures(task.ids),
+              };
+            }
+          },
+          options: { concurrency: 2 },
+        },
+      };
 
-      // Cache extended data
+      // Execute parallel workload
+      const results = await this.parallelProcessor.processMixed(mixedWorkload);
+
+      // Extract results
+      const genres = results.io.find((r) => r.type === "genres")?.data || {};
+      const audioFeatures =
+        results.io.find((r) => r.type === "audioFeatures")?.data || {};
+
+      // Store extended data in parallel
+      const storagePromises = [];
+
       if (Object.keys(genres).length > 0) {
-        await this.db.storeArtistGenres(genres);
+        storagePromises.push(this.db.storeArtistGenres(genres));
       }
 
       if (Object.keys(audioFeatures).length > 0) {
-        await this.db.storeAudioFeatures(audioFeatures);
+        storagePromises.push(this.db.storeAudioFeatures(audioFeatures));
       }
 
-      // Update scan stats
+      // Update scan stats in parallel with storage
       if (this.currentScanId) {
-        await this.db.updateScanProgress(this.currentScanId, {
-          genresFetched: Object.keys(genres).length,
-          audioFeaturesFetched: Object.keys(audioFeatures).length,
-        });
+        storagePromises.push(
+          this.db.updateScanProgress(this.currentScanId, {
+            genresFetched: Object.keys(genres).length,
+            audioFeaturesFetched: Object.keys(audioFeatures).length,
+          })
+        );
       }
+
+      // Wait for all storage operations to complete
+      await Promise.all(storagePromises);
+
+      console.log(
+        chalk.green(
+          "✅ Extended data processing completed with parallel optimization"
+        )
+      );
 
       return {
         genres,
@@ -352,30 +537,79 @@ class SpotifyIngest {
   }
 
   /**
-   * Fetch artist genres in batches
+   * Fetch artist genres in batches with caching and intelligent batching
    */
   async fetchArtistGenres(artistIds) {
     const genres = {};
-    const batchSize = 50; // Spotify API limit for artists endpoint
+    const uncachedIds = [];
 
-    for (let i = 0; i < artistIds.length; i += batchSize) {
-      const batch = artistIds.slice(i, i + batchSize);
-
+    // Check cache first for each artist
+    for (const artistId of artistIds) {
       try {
-        const response = await RetryHandler.retryNetworkOperation(async () => {
-          return await this.spotifyApi.getArtists(batch);
-        }, `Artist Genres Batch ${Math.floor(i / batchSize) + 1}`);
+        const cachedGenres = await this.cache.getArtistGenres(artistId, null);
+        if (cachedGenres) {
+          genres[artistId] = cachedGenres;
+          this.stats.fetchedGenres++;
+        } else {
+          uncachedIds.push(artistId);
+        }
+      } catch (error) {
+        uncachedIds.push(artistId);
+      }
+    }
 
-        response.body.artists.forEach((artist) => {
+    console.log(
+      chalk.gray(
+        `📦 Cache: ${Object.keys(genres).length} artists cached, ${
+          uncachedIds.length
+        } to fetch`
+      )
+    );
+
+    // Fetch uncached artists using BatchManager
+    if (uncachedIds.length > 0) {
+      try {
+        const batchFetchFunction = async (ids) => {
+          const response = await RetryHandler.retryNetworkOperation(
+            async () => {
+              return await this.spotifyApi.getArtists(ids);
+            },
+            `Artist Genres Batch`
+          );
+          return response.body.artists;
+        };
+
+        // Use BatchManager for intelligent batching
+        const artistResults = await this.batchManager.addBatchRequest(
+          "artists",
+          uncachedIds,
+          batchFetchFunction,
+          "normal"
+        );
+
+        // Process and cache results
+        for (const artist of artistResults) {
           if (artist) {
-            genres[artist.id] = artist.genres || [];
-          }
-        });
+            const artistGenres = artist.genres || [];
+            genres[artist.id] = artistGenres;
 
-        this.stats.fetchedGenres += batch.length;
+            // Cache for future use
+            await this.cache.getArtistGenres(
+              artist.id,
+              async () => artistGenres
+            );
+            this.stats.fetchedGenres++;
+          }
+        }
+
+        console.log(
+          chalk.blue(
+            `📦 BatchManager: Processed ${artistResults.length} artists`
+          )
+        );
       } catch (error) {
         console.log(
-          chalk.yellow(`⚠️  Failed to fetch genres for batch starting at ${i}`)
+          chalk.yellow(`⚠️  Failed to fetch genres: ${error.message}`)
         );
       }
     }
@@ -384,34 +618,71 @@ class SpotifyIngest {
   }
 
   /**
-   * Fetch audio features in batches
+   * Fetch audio features in batches with caching and intelligent batching
    */
   async fetchAudioFeatures(trackIds) {
     const audioFeatures = {};
-    const batchSize = 100; // Spotify API limit for audio features endpoint
 
-    for (let i = 0; i < trackIds.length; i += batchSize) {
-      const batch = trackIds.slice(i, i + batchSize);
+    // Use cache's batch audio features method with BatchManager for optimal performance
+    try {
+      const results = await this.cache.getAudioFeatures(
+        trackIds,
+        async (uncachedIds) => {
+          console.log(
+            chalk.gray(
+              `📦 Cache: ${
+                trackIds.length - uncachedIds.length
+              } features cached, ${uncachedIds.length} to fetch`
+            )
+          );
 
-      try {
-        const response = await RetryHandler.retryNetworkOperation(async () => {
-          return await this.spotifyApi.getAudioFeaturesForTracks(batch);
-        }, `Audio Features Batch ${Math.floor(i / batchSize) + 1}`);
+          // Use BatchManager for intelligent batching
+          const batchFetchFunction = async (ids) => {
+            const response = await RetryHandler.retryNetworkOperation(
+              async () => {
+                return await this.spotifyApi.getAudioFeaturesForTracks(ids);
+              },
+              `Audio Features Batch`
+            );
 
-        response.body.audio_features.forEach((features) => {
-          if (features) {
-            audioFeatures[features.id] = features;
-          }
-        });
+            // Filter out null features
+            return response.body.audio_features.filter((f) => f !== null);
+          };
 
-        this.stats.fetchedAudioFeatures += batch.length;
-      } catch (error) {
-        console.log(
-          chalk.yellow(
-            `⚠️  Failed to fetch audio features for batch starting at ${i}`
-          )
-        );
+          // Process through BatchManager for optimal batching
+          const batchResults = await this.batchManager.addBatchRequest(
+            "audioFeatures",
+            uncachedIds,
+            batchFetchFunction,
+            "normal"
+          );
+
+          // Flatten results since BatchManager returns array of arrays
+          const validFeatures = batchResults.flat();
+          this.stats.fetchedAudioFeatures += validFeatures.length;
+
+          console.log(
+            chalk.blue(
+              `📦 BatchManager: Processed ${validFeatures.length} audio features`
+            )
+          );
+
+          return validFeatures;
+        }
+      );
+
+      // Convert results to the expected format
+      for (const result of results) {
+        if (result.features) {
+          audioFeatures[result.id] = result.features;
+        }
       }
+    } catch (error) {
+      console.log(
+        chalk.yellow(
+          `⚠️  Error in cached audio features fetch: ${error.message}`
+        )
+      );
     }
 
     return audioFeatures;
@@ -537,6 +808,239 @@ class SpotifyIngest {
       ErrorHandler.handleStorageError(error, "Database Stats");
       return null;
     }
+  }
+
+  /**
+   * Get cached scan data for skip logic
+   */
+  async getCachedScanData() {
+    try {
+      const stats = await this.db.getStats();
+      const lastScan = await this.getScanHistory();
+
+      if (lastScan && lastScan.length > 0) {
+        const recentScan = lastScan[0];
+        return {
+          timestamp: new Date(recentScan.endTime).getTime(),
+          value: {
+            trackCount: stats.tracks,
+            scanType: recentScan.scanType,
+            status: recentScan.status,
+          },
+        };
+      }
+
+      return null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Get skip logic metrics
+   */
+  getSkipMetrics() {
+    return this.skipLogicManager.getMetrics();
+  }
+
+  /**
+   * Fetch all liked songs using streaming approach for large datasets
+   */
+  async fetchAllLikedSongsStreaming(options = {}) {
+    const {
+      extendedMode = false,
+      onProgress = null,
+      streamBatchSize = 200,
+    } = options;
+
+    try {
+      console.log(chalk.blue("🌊 Starting streaming liked songs ingestion..."));
+      this.stats.startTime = Date.now();
+
+      // Get total count first
+      const firstBatch = await this.fetchTracksPage(
+        this.initializePagination()
+      );
+      if (!firstBatch.success) {
+        throw new Error(`Failed to fetch first batch: ${firstBatch.error}`);
+      }
+
+      this.stats.totalTracks = firstBatch.data.total;
+      console.log(
+        chalk.white(`📊 Streaming ${this.stats.totalTracks} liked songs`)
+      );
+
+      // Create scan record
+      this.currentScanId = await this.db.createScanRecord(
+        extendedMode ? "extended_streaming" : "streaming",
+        this.stats.totalTracks,
+        this.spotifyUserId
+      );
+
+      // Start streaming metrics monitoring
+      this.streamProcessor.startMetricsMonitoring();
+
+      // Create streaming pipeline for data ingestion
+      const result = await this.streamProcessor.createPipeline(
+        // Source: Generator function for paginated API calls
+        async function* () {
+          const pagination = {
+            offset: 0,
+            limit: 50,
+            hasNext: true,
+            currentPage: 1,
+          };
+
+          while (pagination.hasNext) {
+            try {
+              const response = await this.spotifyApi.getMySavedTracks({
+                limit: pagination.limit,
+                offset: pagination.offset,
+                market: "from_token",
+              });
+
+              const items = response.body.items;
+              if (items && items.length > 0) {
+                yield items;
+                pagination.offset += pagination.limit;
+                pagination.hasNext = !!response.body.next;
+              } else {
+                pagination.hasNext = false;
+              }
+            } catch (error) {
+              console.log(
+                chalk.yellow(
+                  `⚠️  API error at offset ${pagination.offset}: ${error.message}`
+                )
+              );
+              pagination.hasNext = false;
+            }
+          }
+        }.bind(this),
+
+        // Processors: Transform and batch the data
+        [
+          // Flatten the batched items
+          (trackBatch) => trackBatch.flat(),
+
+          // Batch processor for efficient database storage
+          {
+            type: "batch",
+            batchSize: streamBatchSize,
+            handler: async (tracks) => {
+              try {
+                // Cache tracks to database in batches
+                const cacheStats = await this.db.storeTracks(
+                  tracks,
+                  this.currentScanId
+                );
+
+                // Update stats
+                this.stats.tracksAdded =
+                  (this.stats.tracksAdded || 0) + cacheStats.tracksAdded;
+                this.stats.tracksUpdated =
+                  (this.stats.tracksUpdated || 0) + cacheStats.tracksUpdated;
+
+                // Progress callback
+                if (onProgress) {
+                  onProgress({
+                    fetched: this.stats.tracksAdded + this.stats.tracksUpdated,
+                    total: this.stats.totalTracks,
+                    percentage:
+                      ((this.stats.tracksAdded + this.stats.tracksUpdated) /
+                        this.stats.totalTracks) *
+                      100,
+                  });
+                }
+
+                return cacheStats;
+              } catch (error) {
+                console.log(
+                  chalk.yellow(`⚠️  Batch storage error: ${error.message}`)
+                );
+                return { tracksAdded: 0, tracksUpdated: 0 };
+              }
+            },
+          },
+        ],
+
+        // Destination: Aggregate results
+        async (batchResult) => {
+          console.log(
+            chalk.gray(
+              `📦 Processed batch: +${batchResult.tracksAdded} new, ~${batchResult.tracksUpdated} updated`
+            )
+          );
+        },
+
+        // Options
+        {
+          source: { maxPages: Math.ceil(this.stats.totalTracks / 50) },
+          batch: { batchSize: streamBatchSize },
+          processing: { enableCaching: true },
+        }
+      );
+
+      // Stop metrics monitoring
+      this.streamProcessor.stopMetricsMonitoring();
+
+      if (result.success) {
+        console.log(
+          chalk.green(`✅ Streaming ingestion completed successfully`)
+        );
+
+        // Handle extended mode if requested
+        let extendedData = {};
+        if (extendedMode) {
+          console.log(
+            chalk.blue("🔗 Fetching extended data for streamed tracks...")
+          );
+          const allTracks = await this.db.getAllTracks(false);
+          extendedData = await this.fetchExtendedData(allTracks);
+        }
+
+        // Complete scan record
+        if (this.currentScanId) {
+          await this.db.completeScan(this.currentScanId, "completed");
+        }
+
+        this.finalizeScan();
+
+        return {
+          success: true,
+          tracks: [], // Tracks are already stored in database
+          extendedData,
+          stats: this.stats,
+          streamMetrics: this.streamProcessor.getOverallMetrics(),
+          scanId: this.currentScanId,
+          streaming: true,
+        };
+      } else {
+        throw new Error(`Streaming pipeline failed: ${result.error}`);
+      }
+    } catch (error) {
+      this.finalizeScan();
+
+      // Mark scan as failed
+      if (this.currentScanId) {
+        await this.db.completeScan(this.currentScanId, "failed", error.message);
+      }
+
+      ErrorHandler.handleNetworkError(error, "Streaming Liked Songs Fetch");
+      return {
+        success: false,
+        error: error.message,
+        tracks: [],
+        streaming: true,
+      };
+    }
+  }
+
+  /**
+   * Get streaming processor metrics
+   */
+  getStreamMetrics() {
+    return this.streamProcessor.getOverallMetrics();
   }
 }
 

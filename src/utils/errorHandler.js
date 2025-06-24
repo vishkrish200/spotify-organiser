@@ -410,6 +410,57 @@ class ErrorHandler {
   }
 
   /**
+   * Handle generic errors with basic troubleshooting
+   */
+  static handleGenericError(error, context = "") {
+    const errorInfo = {
+      type: "generic",
+      originalError: error,
+      context,
+      handled: true,
+      recoverySteps: ["check_logs", "retry_operation"],
+    };
+
+    console.log(
+      chalk.red(`\n❌ Error${context ? ` (${context})` : ""}: ${error.message}`)
+    );
+
+    // Check for common error patterns
+    if (this.isNetworkError(error)) {
+      return this.handleNetworkError(error, context);
+    } else if (this.isSpotifyAPIError(error)) {
+      errorInfo.category = "spotify_api";
+      this.handleSpotifyAPIError(error, errorInfo);
+    } else if (this.isConfigError(error)) {
+      return this.handleConfigError(error, context);
+    } else {
+      errorInfo.category = "unknown";
+      console.log(chalk.yellow("💡 General Troubleshooting:"));
+      console.log(chalk.white("• Check system logs for more details"));
+      console.log(chalk.white("• Verify all dependencies are installed"));
+      console.log(chalk.white("• Try restarting the application"));
+      errorInfo.recoverySteps.push("check_dependencies", "restart_app");
+    }
+
+    console.log(chalk.gray(`\nDetailed error: ${error.message}`));
+    if (error.stack) {
+      console.log(chalk.gray(`Stack trace: ${error.stack}`));
+    }
+
+    return errorInfo;
+  }
+
+  /**
+   * Check if error is a configuration error
+   */
+  static isConfigError(error) {
+    const configMessages = ["config", "environment", "missing", "undefined"];
+    return configMessages.some((msg) =>
+      error.message.toLowerCase().includes(msg)
+    );
+  }
+
+  /**
    * Execute recovery strategy based on error info
    */
   static async executeRecovery(errorInfo, context) {
