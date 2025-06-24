@@ -1,0 +1,119 @@
+{
+  "timestamp": "2025-06-23T11:21:01.312Z",
+  "nodeVersion": "v20.11.1",
+  "platform": "darwin",
+  "arch": "arm64",
+  "loadTests": [
+    {
+      "trackCount": 50,
+      "extendedMode": false,
+      "totalTime": 151.74133299999997,
+      "timePerTrack": 3.0348266599999993,
+      "memoryUsed": -1910832,
+      "memoryPerTrack": -38216.64,
+      "apiCalls": 1,
+      "dbOperations": 1,
+      "success": true
+    },
+    {
+      "trackCount": 200,
+      "extendedMode": false,
+      "totalTime": 560.628583,
+      "timePerTrack": 2.8031429150000005,
+      "memoryUsed": 84064,
+      "memoryPerTrack": 420.32,
+      "apiCalls": 4,
+      "dbOperations": 4,
+      "success": true
+    },
+    {
+      "trackCount": 500,
+      "extendedMode": false,
+      "totalTime": 1059.933875,
+      "timePerTrack": 2.11986775,
+      "memoryUsed": 292888,
+      "memoryPerTrack": 585.776,
+      "apiCalls": 10,
+      "dbOperations": 10,
+      "success": true
+    },
+    {
+      "trackCount": 1000,
+      "extendedMode": false,
+      "totalTime": 2629.9259999999995,
+      "timePerTrack": 2.6299259999999993,
+      "memoryUsed": 377536,
+      "memoryPerTrack": 377.536,
+      "apiCalls": 20,
+      "dbOperations": 20,
+      "success": true
+    },
+    {
+      "trackCount": 1500,
+      "extendedMode": false,
+      "totalTime": 3979.8313749999998,
+      "timePerTrack": 2.6532209166666667,
+      "memoryUsed": -2920088,
+      "memoryPerTrack": -1946.7253333333333,
+      "apiCalls": 30,
+      "dbOperations": 30,
+      "success": true
+    }
+  ],
+  "cachingTests": [
+    {
+      "batchSize": 25,
+      "trackCount": 500,
+      "totalTime": 2984.932167000001,
+      "dbOperations": 20,
+      "avgDbTime": 5.218920700000217,
+      "efficiency": 167.50799416072624
+    },
+    {
+      "batchSize": 50,
+      "trackCount": 500,
+      "totalTime": 1502.40575,
+      "dbOperations": 10,
+      "avgDbTime": 4.812929299999633,
+      "efficiency": 332.79957827637446
+    },
+    {
+      "batchSize": 100,
+      "trackCount": 500,
+      "totalTime": 768.6286250000012,
+      "dbOperations": 5,
+      "avgDbTime": 3.7771584000001894,
+      "efficiency": 650.5092104785965
+    }
+  ],
+  "apiTests": [
+    {
+      "trackCount": 1000,
+      "totalTime": 2674.569125,
+      "apiCalls": 20,
+      "avgResponseTime": 128.03480009999993,
+      "maxResponseTime": 200.1357079999998,
+      "minResponseTime": 56.292333999999755,
+      "throughput": 373.89200026751973
+    }
+  ],
+  "memoryTests": [
+    {
+      "trackCount": 2000,
+      "initialMemory": 11240960,
+      "peakMemory": 11140840,
+      "finalMemory": 11141080,
+      "memoryGrowth": -102872,
+      "memoryPerTrack": -51.436,
+      "memoryRetained": -99880
+    }
+  ],
+  "optimizationSuggestions": [
+    {
+      "type": "batching",
+      "severity": "low",
+      "message": "Optimal batch size (100) differs from current default (50)",
+      "suggestion": "Consider adjusting batch size to 100 for better performance"
+    }
+  ]
+}
