@@ -11,6 +11,9 @@ const authCommand = require("./commands/auth");
 const { scanCommand, statusCommand } = require("./commands/scan");
 const benchmarkCommand = require("./commands/benchmark");
 const analyzeCommand = require("./commands/analyze");
+const { previewCommand } = require("./commands/preview");
+const { rollbackCommand, listSessionsCommand } = require("./commands/rollback");
+const { maintenanceCommand } = require("./commands/maintenance");
 const generateCommand = require("./commands/generate");
 
 const program = new Command();
@@ -124,11 +127,38 @@ program
   .description(
     "Preview the playlists that would be created without making changes"
   )
-  .action(() => {
-    console.log(chalk.yellow("👀 Preview command coming soon..."));
-    console.log(
-      chalk.gray("This will show proposed playlists in a formatted table")
-    );
+  .option(
+    "--confirm",
+    "Skip confirmation prompts and proceed with preview approval"
+  )
+  .option(
+    "--dry-run",
+    "Show what would be created without any confirmation prompts"
+  )
+  .option("--min-tracks <number>", "Minimum tracks required per playlist", "15")
+  .option(
+    "--max-playlists <number>",
+    "Maximum number of playlists to preview",
+    "25"
+  )
+  .option("--details", "Show detailed information including sample tracks")
+  .option("--format <type>", "Output format: table, json", "table")
+  .option("--output <file>", "Export preview results to file")
+  .action(async (options) => {
+    try {
+      await previewCommand({
+        confirm: options.confirm,
+        dryRun: options.dryRun,
+        minTracks: parseInt(options.minTracks),
+        maxPlaylists: parseInt(options.maxPlaylists),
+        details: options.details,
+        format: options.format,
+        output: options.output,
+      });
+    } catch (error) {
+      console.error(chalk.red(`❌ Preview failed: ${error.message}`));
+      process.exit(1);
+    }
   });
 
 // =====================================
@@ -166,13 +196,58 @@ program
 
 program
   .command("rollback")
-  .description("Undo recent playlist creation and delete generated playlists")
-  .option("--last", "Only rollback the most recent generation run")
-  .action(() => {
-    console.log(chalk.yellow("↩️  Rollback command coming soon..."));
-    console.log(
-      chalk.gray("This will help you undo playlist generation if needed")
-    );
+  .description("Rollback recent playlist creation operations")
+  .option("--last", "Rollback the most recent session")
+  .option("--session <id>", "Rollback a specific session by ID")
+  .option("--list", "List available rollback sessions")
+  .option("--confirm", "Skip confirmation prompts and proceed with rollback")
+  .option("--dry-run", "Show what would be rolled back without making changes")
+  .option("--force", "Force rollback without confirmation (use with caution)")
+  .action(async (options) => {
+    try {
+      await rollbackCommand(options);
+    } catch (error) {
+      console.error(chalk.red(`Command failed: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// List rollback sessions command
+program
+  .command("rollback-list")
+  .alias("rl")
+  .description("List available rollback sessions")
+  .action(async () => {
+    try {
+      await listSessionsCommand();
+    } catch (error) {
+      console.error(chalk.red(`Command failed: ${error.message}`));
+      process.exit(1);
+    }
+  });
+
+// =====================================
+// Maintenance Commands
+// =====================================
+
+program
+  .command("maintenance")
+  .description("Manage data expiration policies and perform system cleanup")
+  .option("--stats", "Show detailed maintenance and expiration statistics")
+  .option("--cleanup", "Preview or perform data cleanup operations")
+  .option("--policy", "View current expiration policy settings")
+  .option(
+    "--force",
+    "Force cleanup operations without confirmation (use with --cleanup)"
+  )
+  .option("--dry-run", "Preview cleanup operations without making changes")
+  .action(async (options) => {
+    try {
+      await maintenanceCommand(options);
+    } catch (error) {
+      console.error(chalk.red(`❌ Maintenance failed: ${error.message}`));
+      process.exit(1);
+    }
   });
 
 // =====================================
@@ -225,6 +300,18 @@ program.on("--help", () => {
   );
   console.log(
     "  $ spotify-organizer generate --confirm      # Create playlists"
+  );
+  console.log(
+    "  $ spotify-organizer rollback --list         # List rollback sessions"
+  );
+  console.log(
+    "  $ spotify-organizer rollback --last         # Rollback last session"
+  );
+  console.log(
+    "  $ spotify-organizer maintenance --stats     # View maintenance status"
+  );
+  console.log(
+    "  $ spotify-organizer maintenance --cleanup   # Cleanup expired data"
   );
   console.log();
   console.log(
