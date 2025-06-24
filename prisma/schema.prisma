@@ -243,6 +243,68 @@ model PlaylistTrack {
 }
 
 // =====================================
+// Rollback System
+// =====================================
+
+model RollbackSession {
+  id              String   @id @default(cuid()) // Unique session ID
+  
+  // Session metadata
+  sessionType     String   @map("session_type") // "generation", "manual_deletion"
+  status          String   @default("active") // "active", "rolled_back", "expired"
+  
+  // User context
+  spotifyUserId   String   @map("spotify_user_id")
+  
+  // Statistics
+  playlistsCreated Int     @default(0) @map("playlists_created")
+  tracksAffected  Int     @default(0) @map("tracks_affected")
+  
+  // Timing
+  startTime       DateTime @default(now()) @map("start_time")
+  endTime         DateTime? @map("end_time")
+  expiryTime      DateTime @map("expiry_time") // Auto-expire after 30 days
+  
+  // Rollback tracking
+  rolledBackAt    DateTime? @map("rolled_back_at")
+  rollbackReason  String?  @map("rollback_reason")
+  
+  // Relationships
+  operations      RollbackOperation[]
+
+  @@map("rollback_sessions")
+}
+
+model RollbackOperation {
+  id              Int      @id @default(autoincrement())
+  
+  // Operation details
+  operationType   String   @map("operation_type") // "create_playlist", "add_tracks"
+  resourceType    String   @map("resource_type") // "playlist", "track"
+  resourceId      String   @map("resource_id") // Spotify ID of created resource
+  
+  // Operation data (JSON)
+  operationData   String   @map("operation_data") // JSON blob with creation details
+  
+  // Status
+  status          String   @default("pending") // "pending", "completed", "rolled_back", "failed"
+  
+  // Rollback details
+  rollbackAttempts Int     @default(0) @map("rollback_attempts")
+  rollbackError   String?  @map("rollback_error")
+  rolledBackAt    DateTime? @map("rolled_back_at")
+  
+  // Timestamps
+  createdAt       DateTime @default(now()) @map("created_at")
+  
+  // Relationships
+  session         RollbackSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId       String          @map("session_id")
+
+  @@map("rollback_operations")
+}
+
+// =====================================
 // Configuration & Settings
 // =====================================
 

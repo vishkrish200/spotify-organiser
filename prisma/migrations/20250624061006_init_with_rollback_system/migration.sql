@@ -135,6 +135,37 @@ CREATE TABLE "playlist_tracks" (
 );
 
 -- CreateTable
+CREATE TABLE "rollback_sessions" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "session_type" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'active',
+    "spotify_user_id" TEXT NOT NULL,
+    "playlists_created" INTEGER NOT NULL DEFAULT 0,
+    "tracks_affected" INTEGER NOT NULL DEFAULT 0,
+    "start_time" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "end_time" DATETIME,
+    "expiry_time" DATETIME NOT NULL,
+    "rolled_back_at" DATETIME,
+    "rollback_reason" TEXT
+);
+
+-- CreateTable
+CREATE TABLE "rollback_operations" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "operation_type" TEXT NOT NULL,
+    "resource_type" TEXT NOT NULL,
+    "resource_id" TEXT NOT NULL,
+    "operation_data" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'pending',
+    "rollback_attempts" INTEGER NOT NULL DEFAULT 0,
+    "rollback_error" TEXT,
+    "rolled_back_at" DATETIME,
+    "created_at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "session_id" TEXT NOT NULL,
+    CONSTRAINT "rollback_operations_session_id_fkey" FOREIGN KEY ("session_id") REFERENCES "rollback_sessions" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
 CREATE TABLE "app_config" (
     "key" TEXT NOT NULL PRIMARY KEY,
     "value" TEXT NOT NULL,
