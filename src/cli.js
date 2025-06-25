@@ -13,7 +13,7 @@ const benchmarkCommand = require("./commands/benchmark");
 const analyzeCommand = require("./commands/analyze");
 const { previewCommand } = require("./commands/preview");
 const { rollbackCommand, listSessionsCommand } = require("./commands/rollback");
-const { maintenanceCommand } = require("./commands/maintenance");
+const MaintenanceCommand = require("./commands/maintenance");
 const generateCommand = require("./commands/generate");
 
 const program = new Command();
@@ -230,25 +230,9 @@ program
 // Maintenance Commands
 // =====================================
 
-program
-  .command("maintenance")
-  .description("Manage data expiration policies and perform system cleanup")
-  .option("--stats", "Show detailed maintenance and expiration statistics")
-  .option("--cleanup", "Preview or perform data cleanup operations")
-  .option("--policy", "View current expiration policy settings")
-  .option(
-    "--force",
-    "Force cleanup operations without confirmation (use with --cleanup)"
-  )
-  .option("--dry-run", "Preview cleanup operations without making changes")
-  .action(async (options) => {
-    try {
-      await maintenanceCommand(options);
-    } catch (error) {
-      console.error(chalk.red(`❌ Maintenance failed: ${error.message}`));
-      process.exit(1);
-    }
-  });
+// Configure maintenance commands using the new MaintenanceCommand class
+const maintenanceCommand = new MaintenanceCommand();
+maintenanceCommand.configureCommand(program);
 
 // =====================================
 // Global Error Handling
@@ -308,10 +292,16 @@ program.on("--help", () => {
     "  $ spotify-organizer rollback --last         # Rollback last session"
   );
   console.log(
-    "  $ spotify-organizer maintenance --stats     # View maintenance status"
+    "  $ spotify-organizer maintenance status      # View scheduler status"
   );
   console.log(
-    "  $ spotify-organizer maintenance --cleanup   # Cleanup expired data"
+    "  $ spotify-organizer maintenance start       # Start automated cleanup"
+  );
+  console.log(
+    "  $ spotify-organizer maintenance run         # Run maintenance now"
+  );
+  console.log(
+    "  $ spotify-organizer maintenance stats       # View maintenance stats"
   );
   console.log();
   console.log(
